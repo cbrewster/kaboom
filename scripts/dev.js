@@ -8,8 +8,8 @@ const tasks = [
 		stdio: "inherit",
 		detached: true,
 	}),
-	cp.spawn("npm", [
-		"run", "site", "--silent",
+	cp.spawn("node", [
+		"scripts/demo.js",
 	], {
 		stdio: "inherit",
 		detached: true,
