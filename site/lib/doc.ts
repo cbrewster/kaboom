@@ -12,6 +12,7 @@ export type DocTypes = Record<string, any[]>;
 export interface Doc {
 	types: DocTypes,
 	sections: DocSection[],
+	search: (query: string) => string[],
 }
 
 function gen(dts: string): Doc {
@@ -111,17 +112,24 @@ function gen(dts: string): Doc {
 		}
 	}
 
+	const search = (query: string): string[] => {
+		// TODO
+		return [];
+	}
+
 	return {
 		types,
 		sections,
+		search,
 	};
 
 }
 
-const { types, sections } = gen(dts);
+const { types, sections, search, } = gen(dts);
 
 export {
 	types,
 	sections,
+	search,
 	gen,
 };
