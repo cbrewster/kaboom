@@ -1,20 +1,19 @@
 // TODO: onend event
 
-import {
-	clamp,
-} from "./math";
+import { clamp } from "./math";
 
 type AudioCtx = {
-	ctx: AudioContext,
-	gainNode: GainNode,
-	masterNode: AudioNode,
+  ctx: AudioContext;
+  gainNode: GainNode;
+  masterNode: AudioNode;
+  analyser: AnalyserNode;
 };
 
 type Audio = {
-	ctx: AudioContext,
-	volume(v: number): number,
-	play(snd: SoundData, conf?: AudioPlayConf): AudioPlay,
-	burp(conf?: AudioPlayConf): AudioPlay,
+  ctx: AudioContext;
+  volume(v: number): number;
+  play(snd: SoundData, conf?: AudioPlayConf): AudioPlay;
+  burp(conf?: AudioPlayConf): AudioPlay;
 };
 
 const MIN_GAIN = 0;
@@ -28,200 +27,195 @@ const MAX_DETUNE = 1200;
 import burpBytes from "./burp.mp3";
 
 function audioInit(): Audio {
+  const audio: AudioCtx = (() => {
+    // @ts-ignore
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const gainNode = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    const masterNode = gainNode;
 
-	const audio: AudioCtx = (() => {
+    masterNode.connect(ctx.destination);
+    analyser.connect(ctx.destination);
 
-		// @ts-ignore
-		const ctx = new (window.AudioContext || window.webkitAudioContext)();
-		const gainNode = ctx.createGain();
-		const masterNode = gainNode;
+    return {
+      ctx,
+      gainNode,
+      masterNode,
+      analyser,
+    };
+  })();
 
-		masterNode.connect(ctx.destination);
+  const burpSnd = {
+    buf: new AudioBuffer({
+      length: 1,
+      numberOfChannels: 1,
+      sampleRate: 44100,
+    }),
+  };
 
-		return {
-			ctx,
-			gainNode,
-			masterNode,
-		};
+  audio.ctx.decodeAudioData(
+    burpBytes.buffer.slice(0),
+    (buf) => {
+      burpSnd.buf = buf;
+    },
+    () => {
+      throw new Error("failed to make burp");
+    }
+  );
 
-	})();
+  // get / set master volume
+  function volume(v?: number): number {
+    if (v !== undefined) {
+      audio.gainNode.gain.value = clamp(v, MIN_GAIN, MAX_GAIN);
+    }
+    return audio.gainNode.gain.value;
+  }
 
-	const burpSnd = {
-		buf: new AudioBuffer({
-			length: 1,
-			numberOfChannels: 1,
-			sampleRate: 44100
-		}),
-	};
+  // plays a sound, returns a control handle
+  function play(
+    snd: SoundData,
+    conf: AudioPlayConf = {
+      loop: false,
+      volume: 1,
+      speed: 1,
+      detune: 0,
+      seek: 0,
+    }
+  ): AudioPlay {
+    let stopped = false;
+    let srcNode = audio.ctx.createBufferSource();
 
-	audio.ctx.decodeAudioData(burpBytes.buffer.slice(0), (buf) => {
-		burpSnd.buf = buf;
-	}, () => {
-		throw new Error("failed to make burp")
-	});
+    srcNode.buffer = snd.buf;
+    srcNode.loop = conf.loop ? true : false;
 
-	// get / set master volume
-	function volume(v?: number): number {
-		if (v !== undefined) {
-			audio.gainNode.gain.value = clamp(v, MIN_GAIN, MAX_GAIN);
-		}
-		return audio.gainNode.gain.value;
-	}
+    const gainNode = audio.ctx.createGain();
 
-	// plays a sound, returns a control handle
-	function play(
-		snd: SoundData,
-		conf: AudioPlayConf = {
-			loop: false,
-			volume: 1,
-			speed: 1,
-			detune: 0,
-			seek: 0,
-		},
-	): AudioPlay {
+    srcNode.connect(gainNode);
+    srcNode.connect(audio.analyser);
+    gainNode.connect(audio.masterNode);
 
-		let stopped = false;
-		let srcNode = audio.ctx.createBufferSource();
+    const pos = conf.seek ?? 0;
 
-		srcNode.buffer = snd.buf;
-		srcNode.loop = conf.loop ? true : false;
+    srcNode.start(0, pos);
 
-		const gainNode = audio.ctx.createGain();
+    let startTime = audio.ctx.currentTime - pos;
+    let stopTime: number | null = null;
 
-		srcNode.connect(gainNode);
-		gainNode.connect(audio.masterNode);
+    const handle = {
+      stop() {
+        if (stopped) {
+          return;
+        }
+        this.pause();
+        startTime = audio.ctx.currentTime;
+      },
 
-		const pos = conf.seek ?? 0;
+      play(seek?: number) {
+        if (!stopped) {
+          return;
+        }
 
-		srcNode.start(0, pos);
+        const oldNode = srcNode;
 
-		let startTime = audio.ctx.currentTime - pos;
-		let stopTime: number | null = null;
+        srcNode = audio.ctx.createBufferSource();
+        srcNode.buffer = oldNode.buffer;
+        srcNode.loop = oldNode.loop;
+        srcNode.playbackRate.value = oldNode.playbackRate.value;
 
-		const handle = {
+        if (srcNode.detune) {
+          srcNode.detune.value = oldNode.detune.value;
+        }
 
-			stop() {
-				if (stopped) {
-					return;
-				}
-				this.pause();
-				startTime = audio.ctx.currentTime;
-			},
+        srcNode.connect(gainNode);
 
-			play(seek?: number) {
+        const pos = seek ?? this.time();
 
-				if (!stopped) {
-					return;
-				}
+        srcNode.start(0, pos);
+        startTime = audio.ctx.currentTime - pos;
+        stopped = false;
+        stopTime = null;
+      },
 
-				const oldNode = srcNode;
+      pause() {
+        if (stopped) {
+          return;
+        }
+        srcNode.stop();
+        stopped = true;
+        stopTime = audio.ctx.currentTime;
+      },
 
-				srcNode = audio.ctx.createBufferSource();
-				srcNode.buffer = oldNode.buffer;
-				srcNode.loop = oldNode.loop;
-				srcNode.playbackRate.value = oldNode.playbackRate.value;
+      paused(): boolean {
+        return stopped;
+      },
 
-				if (srcNode.detune) {
-					srcNode.detune.value = oldNode.detune.value;
-				}
+      stopped(): boolean {
+        return stopped;
+      },
 
-				srcNode.connect(gainNode);
+      // TODO: affect time()
+      speed(val?: number): number {
+        if (val !== undefined) {
+          srcNode.playbackRate.value = clamp(val, MIN_SPEED, MAX_SPEED);
+        }
+        return srcNode.playbackRate.value;
+      },
 
-				const pos = seek ?? this.time();
+      detune(val?: number): number {
+        if (!srcNode.detune) {
+          return 0;
+        }
+        if (val !== undefined) {
+          srcNode.detune.value = clamp(val, MIN_DETUNE, MAX_DETUNE);
+        }
+        return srcNode.detune.value;
+      },
 
-				srcNode.start(0, pos);
-				startTime = audio.ctx.currentTime - pos;
-				stopped = false;
-				stopTime = null;
+      volume(val?: number): number {
+        if (val !== undefined) {
+          gainNode.gain.value = clamp(val, MIN_GAIN, MAX_GAIN);
+        }
+        return gainNode.gain.value;
+      },
 
-			},
+      loop() {
+        srcNode.loop = true;
+      },
 
-			pause() {
-				if (stopped) {
-					return;
-				}
-				srcNode.stop();
-				stopped = true;
-				stopTime = audio.ctx.currentTime;
-			},
+      unloop() {
+        srcNode.loop = false;
+      },
 
-			paused(): boolean {
-				return stopped;
-			},
+      duration(): number {
+        return snd.buf.duration;
+      },
 
-			stopped(): boolean {
-				return stopped;
-			},
+      time(): number {
+        if (stopped) {
+          return stopTime - startTime;
+        } else {
+          return audio.ctx.currentTime - startTime;
+        }
+      },
+    };
 
-			// TODO: affect time()
-			speed(val?: number): number {
-				if (val !== undefined) {
-					srcNode.playbackRate.value = clamp(val, MIN_SPEED, MAX_SPEED);
-				}
-				return srcNode.playbackRate.value;
-			},
+    handle.speed(conf.speed);
+    handle.detune(conf.detune);
+    handle.volume(conf.volume);
 
-			detune(val?: number): number {
-				if (!srcNode.detune) {
-					return 0;
-				}
-				if (val !== undefined) {
-					srcNode.detune.value = clamp(val, MIN_DETUNE, MAX_DETUNE);
-				}
-				return srcNode.detune.value;
-			},
+    return handle;
+  }
 
-			volume(val?: number): number {
-				if (val !== undefined) {
-					gainNode.gain.value = clamp(val, MIN_GAIN, MAX_GAIN);
-				}
-				return gainNode.gain.value;
-			},
+  function burp(conf?: AudioPlayConf): AudioPlay {
+    return play(burpSnd, conf);
+  }
 
-			loop() {
-				srcNode.loop = true;
-			},
-
-			unloop() {
-				srcNode.loop = false;
-			},
-
-			duration(): number {
-				return snd.buf.duration;
-			},
-
-			time(): number {
-				if (stopped) {
-					return stopTime - startTime;
-				} else {
-					return audio.ctx.currentTime - startTime;
-				}
-			},
-
-		};
-
-		handle.speed(conf.speed);
-		handle.detune(conf.detune);
-		handle.volume(conf.volume);
-
-		return handle;
-
-	}
-
-	function burp(conf?: AudioPlayConf): AudioPlay {
-		return play(burpSnd, conf);
-	}
-
-	return {
-		ctx: audio.ctx,
-		volume,
-		play,
-		burp,
-	};
-
+  return {
+    ctx: audio.ctx,
+    volume,
+    play,
+    burp,
+  };
 }
 
-export {
-	Audio,
-	audioInit,
-};
+export { Audio, audioInit };
