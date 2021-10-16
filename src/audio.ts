@@ -14,6 +14,7 @@ type Audio = {
   volume(v: number): number;
   play(snd: SoundData, conf?: AudioPlayConf): AudioPlay;
   burp(conf?: AudioPlayConf): AudioPlay;
+  freq(): Uint8Array;
 };
 
 const MIN_GAIN = 0;
@@ -210,11 +211,18 @@ function audioInit(): Audio {
     return play(burpSnd, conf);
   }
 
+  function freq(): Uint8Array {
+    const array = new Uint8Array(audio.analyser.frequencyBinCount);
+    audio.analyser.getByteFrequencyData(array);
+    return array;
+  }
+
   return {
     ctx: audio.ctx,
     volume,
     play,
     burp,
+    freq,
   };
 }
 

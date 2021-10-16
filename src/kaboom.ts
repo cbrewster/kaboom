@@ -2429,7 +2429,7 @@ module.exports = (gconf: KaboomConf = {}): KaboomCtx => {
     volume: audio.volume,
     burp: audio.burp,
     audioCtx: audio.ctx,
-    audio: audio,
+    audioFreq: audio.freq,
     // math
     rng,
     rand,
